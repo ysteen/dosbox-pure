@@ -1185,6 +1185,19 @@ static DOS_Drive* DBP_Mount(unsigned image_index = 0, bool unmount_existing = tr
 	{
 		imageDiskList[letter-'A'] = disk;
 		dbpimage->image_disk = true;
+		// Images opened from ZIP contents are read-only, so imageDisk normally
+		// keeps guest writes in a discardDisk that disappears when the core is
+		// restarted.  A manually IMGMOUNTed boot disk does not pass through the
+		// Boot OS menu where DOSBox Pure normally enables its differencing disk.
+		// Persist the boot hard disk in the regular libretro save directory too.
+		if (letter >= 'C' && disk->hardDrive)
+		{
+			std::string save_path = DBP_GetSaveFile(SFT_DIFFDISK);
+			const size_t drive_pos = save_path.rfind("-CDRIVE.sav");
+			if (drive_pos != std::string::npos) save_path[drive_pos + 1] = letter;
+			disk->SetDifferencingDisk(save_path.c_str());
+			LOG_MSG("[DOSBOX SAVE] %c: disk changes: %s", letter, save_path.c_str());
+		}
 		if (letter >= 'C') updateDPT();
 	}
 
@@ -2859,8 +2872,11 @@ static void init_dosbox(bool forcemenu = false, bool reinit = false, const std::
 
 	struct Local { static Thread::RET_t THREAD_CC ThreadDOSBox(void*)
 	{
+		log_cb(RETRO_LOG_INFO, "[DOSBOX THREAD] StartUp begin\n");
 		control->StartUp();
+		log_cb(RETRO_LOG_INFO, "[DOSBOX THREAD] StartUp returned normally\n");
 		DBP_ThreadControl(TCM_ON_SHUTDOWN);
+		log_cb(RETRO_LOG_INFO, "[DOSBOX THREAD] shutdown handshake complete\n");
 		return 0;
 	}};
 
@@ -3699,6 +3715,13 @@ void retro_run(void)
 			av_info.geometry.base_width, av_info.geometry.base_height, av_info.timing.fps, av_info.geometry.aspect_ratio,
 			view_width, view_height, av_info.timing.fps, buf.ratio);
 		bool newfps = (av_info.timing.fps != targetfps || next_fpsboost != last_fpsboost), newmax = (av_info.geometry.max_width < view_width || av_info.geometry.max_height < view_height);
+		#ifdef EMSCRIPTEN
+		// VGA mode switches can produce tiny floating-point FPS differences.
+		// SET_SYSTEM_AV_INFO makes RetroArch reinitialize drivers, which is both
+		// unnecessary and unsafe for a canvas transferred to a pthread.
+		if (next_fpsboost == last_fpsboost && av_info.timing.fps > targetfps - 0.5 && av_info.timing.fps < targetfps + 0.5)
+			newfps = false;
+		#endif
 		if (av_info.geometry.max_width < view_width)   av_info.geometry.max_width = view_width;
 		if (av_info.geometry.max_height < view_height) av_info.geometry.max_height = view_height;
 		av_info.geometry.base_width = view_width;

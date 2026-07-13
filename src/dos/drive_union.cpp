@@ -395,6 +395,10 @@ struct unionDriveImpl
 		{
 			Bit32u size = sf.size;
 			char* path = sf.path;
+#ifdef __EMSCRIPTEN__
+			if (size != (Bit32u)-1 && size >= 8 * 1024 * 1024)
+				LOG_MSG("[DOSBOX SAVE] Large union file: %s (%u bytes)", path, (unsigned)size);
+#endif
 			sbuf.clear();
 			const Bit8u* filedata = NULL;
 			Bit16u pathLen = (Bit16u)(strlen(path) + (sf.is_dir ? 1 : 0));

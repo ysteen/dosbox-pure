@@ -70,6 +70,12 @@ else ifeq ($(platform),tvos-arm64)
   LDFLAGS := -Wl,-dead_strip $(MINVERSION)
   COMMONFLAGS += -DDISABLE_DYNAREC=1 -Wno-unknown-warning-option -Wno-deprecated-declarations $(MINVERSION)
   STRIPCMD := $(or $(STRIP),strip) -xS
+else ifeq ($(platform),emscripten)
+  OUTNAME := dosbox_pure_libretro_$(platform).bc
+  STATIC_LINKING = 1
+  CXX += -std=gnu++11
+  # WebAssembly cannot execute DOSBox Pure's native x86/ARM dynamic recompiler.
+  COMMONFLAGS += -DEMSCRIPTEN -DDISABLE_DYNAREC=1 -pthread
 else ifneq ($(ISMAC),)
   OUTNAME := dosbox_pure_libretro.dylib
   CXX     ?= c++

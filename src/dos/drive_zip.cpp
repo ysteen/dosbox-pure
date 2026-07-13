@@ -1319,6 +1319,13 @@ struct Zip_DeflateUnpacker : ZIP_Unpacker
 		Reset(f);
 
 		// Read seek cache file for larger files
+		/* The persistent .SKC file for a large compressed disk image can itself
+		 * grow to tens of megabytes. In a browser that file is copied into the
+		 * union drive's .pure.zip save while the original ~1 GB content archive
+		 * is still resident, which can exhaust contiguous Wasm memory. Runtime
+		 * seek cursors above remain enabled; only the cross-session cache file is
+		 * disabled for Emscripten. */
+#ifndef __EMSCRIPTEN__
 		Bit8u drive_idx;
 		if (cursor_count > SEEK_CACHE_CURSOR_NEED && (drive_idx = DriveGetIndex(drv)) != DOS_DRIVES)
 		{
@@ -1359,6 +1366,7 @@ struct Zip_DeflateUnpacker : ZIP_Unpacker
 				}
 			}
 		}
+#endif
 	}
 
 	~Zip_DeflateUnpacker()
