@@ -217,7 +217,9 @@ struct DBP_Run
 			const char newC = 'E'; // Third IDE drive (if it were D: the IDE CD-ROM drive wouldn't show up in Windows 9x)
 			if      (imageDiskList['C'-'A']) std::swap(imageDiskList['C'-'A'], imageDiskList[newC-'A']); // Loaded content is FAT12/FAT16 disk image
 			else if (imageDiskList['E'-'A'] && dbp_content_path == imageDiskList['E'-'A']->diskname) {}  // Loaded content is FAT32/other disk image
-			else if (!BatchFileBoot::MountOSIMG(newC, (dbp_content_path + ".img").c_str(), "D: drive image", true, false) && Drives['C'-'A'])
+			else if (BatchFileBoot::MountOSIMG(newC, (dbp_content_path + ".img").c_str(), "D: drive image", true, false)) {}
+			else if (DBP_MountContentHardDiskForBootOS(newC)) {}
+			else if (Drives['C'-'A'])
 			{
 				Bit32u save_hash = 0;
 				DBP_SetDriveLabelFromContentPath(Drives['C'-'A'], dbp_content_path.c_str(), 'C', NULL, NULL, true);
