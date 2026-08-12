@@ -1209,7 +1209,19 @@ static bool DBP_MountContentHardDiskForBootOS(char hard_disk_letter)
 {
 	// A sibling CONTENT.zip.img can be mounted directly by the code in BootOS,
 	// but web frontends can only deliver one content file. Allow the equivalent
-	// hard disk image to live inside the content ZIP alongside a CUE/ISO.
+	// hard disk image to live inside the content ZIP alongside a CUE. Without a
+	// CUE, keep the normal ZIP drive mounted so files can be exchanged with the
+	// booted OS.
+	std::string cue_path;
+	for (const DBP_Image& image : dbp_images)
+	{
+		if (image.path.size() < 4 || image.path[0] != '$' || image.path[1] != 'C') continue;
+		const char* label = DBP_Image_Label(image);
+		const char* ext = strrchr(label, '.');
+		if (ext && !strcasecmp(ext + 1, "CUE")) { cue_path = image.path; break; }
+	}
+	if (cue_path.empty()) return false;
+
 	int best_index = -1, best_rank = 3;
 	const char *content_fs = strrchr(dbp_content_path.c_str(), '/');
 	const char *content_bs = strrchr(dbp_content_path.c_str(), '\\');
@@ -1242,18 +1254,18 @@ static bool DBP_MountContentHardDiskForBootOS(char hard_disk_letter)
 	if (!imageDiskList[hard_disk_letter-'A'] || !imageDiskList[hard_disk_letter-'A']->hardDrive) return false;
 
 	// DOSBox uses D: for the CD-ROM while booted Windows sees the hard disk in
-	// the second IDE slot as D: and this CD-ROM as E:. Reinsert the first CD
-	// after moving the embedded hard disk so archive ordering cannot swap them.
+	// the second IDE slot as D: and this CD-ROM as E:. Reinsert the CUE after
+	// moving the embedded hard disk so archive ordering cannot swap them.
 	for (size_t i = 0; i != dbp_images.size(); i++)
 	{
 		const DBP_Image& image = dbp_images[i];
-		if (image.path.size() >= 4 && image.path[0] == '$' && image.path[1] == 'C' && DBP_Image_IsCD(image))
+		if (image.path == cue_path)
 		{
 			DBP_Mount((unsigned)i, true, 'D');
-			break;
+			return true;
 		}
 	}
-	return true;
+	return false;
 }
 
 static void DBP_Remount(char drive1, char drive2)
