@@ -1318,6 +1318,8 @@ struct Zip_DeflateUnpacker : ZIP_Unpacker
 		Reset(f);
 
 		// Read seek cache file for larger files
+		// Keep browser seek caches in memory rather than in the saved union drive.
+#ifndef __EMSCRIPTEN__
 		Bit8u drive_idx;
 		if (cursor_count > SEEK_CACHE_CURSOR_NEED && (drive_idx = DriveGetIndex(drv)) != DOS_DRIVES)
 		{
@@ -1358,6 +1360,7 @@ struct Zip_DeflateUnpacker : ZIP_Unpacker
 				}
 			}
 		}
+#endif
 	}
 
 	~Zip_DeflateUnpacker()

@@ -166,6 +166,10 @@ struct differencingDisk
 				else
 					fseek_wrap(saveFile, cursor_val + sizeof(sectnum), SEEK_SET);
 				fwrite(data, BYTESPERSECTOR, 1, saveFile);
+				#ifdef __EMSCRIPTEN__
+				// Expose the latest sectors to the frontend's filesystem sync.
+				fflush(saveFile);
+				#endif
 			}
 			else
 			{
@@ -186,6 +190,9 @@ struct differencingDisk
 				Bit32u sectnumval = 0xFFFFFFFF;
 				fseek_wrap(saveFile, cursor_val, SEEK_SET);
 				fwrite(&sectnumval, sizeof(sectnumval), 1, saveFile);
+				#ifdef __EMSCRIPTEN__
+				fflush(saveFile);
+				#endif
 			}
 			diffFreeCursors.push_back(cursor_val);
 			*cursor_ptr = NULL_CURSOR;

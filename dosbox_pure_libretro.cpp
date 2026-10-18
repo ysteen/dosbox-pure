@@ -87,7 +87,7 @@ static struct retro_hw_render_callback dbp_hw_render;
 static void (*dbp_opengl_draw)(const DBP_Buffer& buf);
 
 // DOSBOX DISC MANAGEMENT
-struct DBP_Image { std::string path, longpath; bool mounted = false, remount = false, image_disk = false, imgmount = false, imfat = false, imiso = false; char drive; int dirlen, dd; };
+struct DBP_Image { std::string path, longpath; bool mounted = false, remount = false, image_disk = false, hard_disk = false, imgmount = false, imfat = false, imiso = false; char drive; int dirlen, dd; };
 static std::vector<DBP_Image> dbp_images;
 static std::vector<std::string> dbp_osimages, dbp_shellzips;
 static StringToPointerHashMap<void> dbp_vdisk_filter;
@@ -1025,6 +1025,8 @@ static DOS_Drive* DBP_Mount(unsigned image_index = 0, bool unmount_existing = tr
 				return fat;
 			}
 		}
+		// Track hard disks even when an occupied DOS drive prevents auto-mounting.
+		if (dbpimage) dbpimage->hard_disk = disk->hardDrive;
 		if (!letter) letter = (disk->hardDrive ? (drive ? 'D' : 'E') : 'A');
 		media_byte = (disk->hardDrive ? 0xF8 : (disk->active ? disk->GetBiosType() : 0));
 	}
@@ -1154,10 +1156,73 @@ static DOS_Drive* DBP_Mount(unsigned image_index = 0, bool unmount_existing = tr
 	{
 		imageDiskList[letter-'A'] = disk;
 		dbpimage->image_disk = true;
+		#ifdef __EMSCRIPTEN__
+		// Keep writes to embedded hard disks in the frontend's save directory.
+		if (letter >= 'C' && disk->hardDrive && path && path[0] == '$')
+		{
+			std::string save_path = DBP_GetSaveFile(SFT_DIFFDISK);
+			const size_t drive_pos = save_path.rfind("-CDRIVE.sav");
+			if (drive_pos != std::string::npos) save_path[drive_pos + 1] = letter;
+			disk->SetDifferencingDisk(save_path.c_str());
+		}
+		#endif
 		if (letter >= 'C') updateDPT();
 	}
 
 	return NULL;
+}
+
+static bool DBP_MountContentHardDiskForBootOS(char hard_disk_letter)
+{
+	// Without a CUE, expose the ZIP as the normal writable content drive.
+	std::string cue_path;
+	for (const DBP_Image& image : dbp_images)
+	{
+		if (image.path.size() < 4 || image.path[0] != '$' || image.path[1] != 'C') continue;
+		const char* label = DBP_Image_Label(image);
+		const char* ext = strrchr(label, '.');
+		if (ext && !strcasecmp(ext + 1, "CUE")) { cue_path = image.path; break; }
+	}
+	if (cue_path.empty()) return false;
+
+	int best_index = -1, best_rank = 3;
+	const size_t content_separator = dbp_content_path.find_last_of("/\\");
+	const std::string sidecar_name = dbp_content_path.substr(content_separator == std::string::npos ? 0 : content_separator + 1) + ".img";
+	for (size_t i = 0; i != dbp_images.size(); i++)
+	{
+		const DBP_Image& image = dbp_images[i];
+		if (!image.hard_disk || image.path.size() < 4 || image.path[0] != '$' || image.path[1] != 'C') continue;
+		const char* label = DBP_Image_Label(image);
+		const int rank = (!strcasecmp(label, sidecar_name.c_str()) ? 0 : (!strcasecmp(label, "image.img") ? 1 : 2));
+		if (rank < best_rank) { best_index = (int)i; best_rank = rank; }
+	}
+	if (best_index < 0) return false;
+
+	// Move the existing mount so the guest sees only one copy of the disk.
+	const std::string hard_disk_path = dbp_images[best_index].path;
+	if (dbp_images[best_index].mounted && dbp_images[best_index].drive != hard_disk_letter)
+	{
+		DBP_Unmount(dbp_images[best_index].drive);
+		best_index = -1;
+		for (size_t i = 0; i != dbp_images.size(); i++)
+			if (dbp_images[i].path == hard_disk_path) { best_index = (int)i; break; }
+		if (best_index < 0) return false;
+	}
+
+	DBP_Mount((unsigned)best_index, true, hard_disk_letter);
+	if (!imageDiskList[hard_disk_letter-'A'] || !imageDiskList[hard_disk_letter-'A']->hardDrive) return false;
+
+	// BIOS slot E: appears as the guest's D: hard disk; the CD appears as E:.
+	for (size_t i = 0; i != dbp_images.size(); i++)
+	{
+		const DBP_Image& image = dbp_images[i];
+		if (image.path == cue_path)
+		{
+			DBP_Mount((unsigned)i, true, 'D');
+			return true;
+		}
+	}
+	return false;
 }
 
 static void DBP_Remount(char drive1, char drive2)
@@ -1231,9 +1296,10 @@ void DBPSerialize_Mounts(DBPArchive& ar)
 			if (i.mounted && DBP_ExtractPathInfo(i.longpath.c_str(), &fname))
 				mounthash[mounthash[0] ? 1 : 0] = BaseStringToPointerHashMap::Hash(fname);
 	ar << mounthash[0] << mounthash[1];
+	// Keep existing drive assignments, including hard disks moved for OS boot.
 	if (ar.mode == DBPArchive::MODE_LOAD && mounthash[0])
 		for (DBP_Image& i : dbp_images)
-			if (DBP_ExtractPathInfo(i.longpath.c_str(), &fname) && (mounthash[0] == BaseStringToPointerHashMap::Hash(fname) || (mounthash[1] && mounthash[1] == BaseStringToPointerHashMap::Hash(fname))))
+			if (!i.mounted && DBP_ExtractPathInfo(i.longpath.c_str(), &fname) && (mounthash[0] == BaseStringToPointerHashMap::Hash(fname) || (mounthash[1] && mounthash[1] == BaseStringToPointerHashMap::Hash(fname))))
 				DBP_Mount((unsigned)(&i - &dbp_images[0]), true);
 }
 
@@ -3634,6 +3700,11 @@ void retro_run(void)
 			av_info.geometry.base_width, av_info.geometry.base_height, av_info.timing.fps, av_info.geometry.aspect_ratio,
 			view_width, view_height, av_info.timing.fps, buf.ratio);
 		bool newfps = (av_info.timing.fps != targetfps || next_fpsboost != last_fpsboost), newmax = (av_info.geometry.max_width < view_width || av_info.geometry.max_height < view_height);
+		#ifdef EMSCRIPTEN
+		// Small VGA timing differences must not recreate the transferred canvas.
+		if (next_fpsboost == last_fpsboost && av_info.timing.fps > targetfps - 0.5 && av_info.timing.fps < targetfps + 0.5)
+			newfps = false;
+		#endif
 		if (av_info.geometry.max_width < view_width)   av_info.geometry.max_width = view_width;
 		if (av_info.geometry.max_height < view_height) av_info.geometry.max_height = view_height;
 		av_info.geometry.base_width = view_width;
